@@ -6,12 +6,28 @@
 /*   By: smaegan <smaegan@student.42.fr>            +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
 /*   Created: 2022/03/28 17:02:28 by smaegan           #+#    #+#             */
-/*   Updated: 2022/03/29 17:06:53 by smaegan          ###   ########.fr       */
+/*   Updated: 2022/04/01 19:00:41 by smaegan          ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
 #include "philo.h"
 #include <stdio.h>
+
+int	check_e_and_s(t_philo_attr *attr)
+{
+	int	i;
+
+	i = 0;
+	if (attr->ph->eat_num == -1)
+		return (0);
+	while (i < attr->ph->philo_num)
+	{
+		if (attr->ph->eat_and_sleep[i] == 0)
+			return (0);
+		i++;
+	}
+	return (1);
+}
 
 int	ph_init(int argc, char **argv, t_philo *ph)
 {
@@ -19,13 +35,19 @@ int	ph_init(int argc, char **argv, t_philo *ph)
 
 	i = 0;
 	ph->prog_state = 1;
-	gettimeofday(&ph->prog_start_time, NULL);
+	gettimeofday(&(ph->prog_start_time), NULL);
 	ph->philo_num = ft_atoi(argv[1]);
 	ph->time_to_die = ft_atoi(argv[2]);
 	ph->time_to_eat = ft_atoi(argv[3]);
 	ph->time_to_sleep = ft_atoi(argv[4]);
 	if (argc == 6)
+	{
 		ph->eat_num = ft_atoi(argv[5]);
+		ph->eat_and_sleep = malloc(sizeof(int) * ph->philo_num);
+		ft_memset(ph->eat_and_sleep, '\0', sizeof(int) * ph->philo_num);
+	}
+	else
+		ph->eat_num = -1;
 	ph->philos = malloc(sizeof(pthread_t) * ph->philo_num);
 	ph->forks = malloc(sizeof(pthread_mutex_t) * ph->philo_num);
 	if (ph->philos == NULL || ph->forks == NULL)
@@ -87,30 +109,37 @@ int	msg(t_philo_attr *attr, int type)
 
 void	psleep(t_philo_attr *attr)
 {
-	msg(attr, 1);
-	if (attr->ph->prog_state == 0)
+	int	time;
+
+	if (attr->ph->prog_state == 0 || check_e_and_s(attr))
 		return ;
-	attr->starve_time += attr->ph->time_to_sleep;
-	if (attr->starve_time < attr->ph->time_to_die)
-		usleep(attr->ph->time_to_sleep * 1000);
+	msg(attr, 1);
+	if (attr->starve_time + attr->ph->time_to_sleep > attr->ph->time_to_die)
+		time = attr->ph->time_to_die - attr->starve_time;
 	else
+		time = attr->ph->time_to_sleep;
+	attr->starve_time += time;
+	usleep(time * 1000);
+	if (attr->starve_time >= attr->ph->time_to_die)
 		attr->ph->prog_state = msg(attr, 4);
 }
 
 void	think(t_philo_attr *attr)
 {
+	int				time;
 	int				my_fork;
 	int				right_fork;
 	struct timeval	start_time;
 	struct timeval	end_time;
 
+	if (attr->ph->prog_state == 0 || check_e_and_s(attr))
+		return ;
 	msg(attr, 2);
 	gettimeofday(&start_time, NULL);
 	my_fork = 1;
 	right_fork = 1;
-	if (attr->ph->prog_state == 0)
-		return ;
-	while (my_fork != 0 && right_fork != 0)
+	while (attr->ph->prog_state != 0 && my_fork != 0
+		&& right_fork != 0 && !check_e_and_s(attr))
 	{
 		my_fork = pthread_mutex_trylock(&(attr->ph->forks[attr->id]));
 		if (my_fork != 0)
@@ -122,26 +151,38 @@ void	think(t_philo_attr *attr)
 			pthread_mutex_unlock(&(attr->ph->forks[attr->id]));
 			my_fork = 1;
 		}
+		gettimeofday(&end_time, NULL);
+		time = (end_time.tv_sec - start_time.tv_sec) * 1000
+			+ (end_time.tv_usec - start_time.tv_usec) / 1000;
+		if (attr->starve_time + time >= attr->ph->time_to_die)
+			attr->ph->prog_state = msg(attr, 4);
 	}
-	msg(attr, 3);
-	gettimeofday(&end_time, NULL);
-	attr->starve_time += (end_time.tv_sec - start_time.tv_sec) * 1000
-		+ (end_time.tv_usec - start_time.tv_usec) / 1000;
-	if (attr->starve_time > attr->ph->time_to_die)
-		attr->ph->prog_state = msg(attr, 4);
+	attr->starve_time += time;
+	if (attr->ph->prog_state != 0 && !check_e_and_s(attr))
+		msg(attr, 3);
 }
 
 void	eat(t_philo_attr *attr)
 {
-	msg(attr, 0);
-	attr->starve_time += attr->ph->time_to_eat;
-	if (attr->ph->prog_state != 0 && attr->starve_time < attr->ph->time_to_die)
+	int	time;
+
+	if (attr->ph->prog_state != 0 && !check_e_and_s(attr))
 	{
-		usleep(attr->ph->time_to_eat * 1000);
+		msg(attr, 0);
+		if (attr->starve_time + attr->ph->time_to_eat > attr->ph->time_to_die)
+			time = attr->ph->time_to_die - attr->starve_time;
+		else
+			time = attr->ph->time_to_eat;
+		attr->starve_time += time;
+		usleep(time * 1000);
+		if (attr->ph->eat_num != -1)
+			attr->eat_num++;
+		if (attr->ph->eat_num != -1 && attr->eat_num == attr->ph->eat_num)
+			attr->ph->eat_and_sleep[attr->id] = 1;
+		if (attr->starve_time >= attr->ph->time_to_die)
+			attr->ph->prog_state = msg(attr, 4);
 		attr->starve_time = 0;
 	}
-	else
-		attr->ph->prog_state = msg(attr, 4);
 	pthread_mutex_unlock(&(attr->ph->forks[attr->id]));
 	pthread_mutex_unlock(&(attr->ph->forks[(attr->id + 1) % attr->ph->philo_num]));
 }
@@ -151,7 +192,7 @@ void	*philo_routine(void *arg)
 	t_philo_attr	*attr;
 
 	attr = (t_philo_attr *) arg;
-	while (attr->ph->prog_state != 0)
+	while (attr->ph->prog_state != 0 && !check_e_and_s(attr))
 	{
 		think(attr);
 		eat(attr);
@@ -173,6 +214,8 @@ int	attrs_init(t_philo_attr **attrs, t_philo *ph)
 		(*attrs)[i].id = i;
 		(*attrs)[i].starve_time = 0;
 		(*attrs)[i].ph = ph;
+		if (ph->eat_num != -1)
+			(*attrs)[i].eat_num = 0;
 		i++;
 	}
 	return (0);
@@ -197,11 +240,6 @@ int	main(int argc, char **argv)
 		return (ph_destroy(&ph));
 	if (attrs_init(&attrs, &ph))
 		return (attrs_destroy(&attrs));
-	for (int i = 0; i < ph.philo_num; i++)
-	{
-		printf("attr %d: id= %d, st_t= %d, ph= %p \n", i,
-			attrs[i].id, attrs[i].starve_time, attrs[i].ph);
-	}
 	while (i < ph.philo_num)
 	{
 		pthread_create(&(ph.philos[i]), NULL, philo_routine, &attrs[i]);
@@ -210,5 +248,5 @@ int	main(int argc, char **argv)
 	i = 0;
 	while (i < ph.philo_num)
 		pthread_join(ph.philos[i++], NULL);
-	ph_destroy(&ph);
+	attrs_destroy(&attrs);
 }
